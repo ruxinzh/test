@@ -85,7 +85,7 @@ var
   HomeNode:  HomeState;
   Procs: array [Proc] of ProcState;
   Net:   array [Node] of multiset [NetMax] of Message;
-  InBox: array [Node] of array [VCType] of Message;
+--  InBox: array [Node] of array [VCType] of Message;
   msg_processed: boolean;
   LastWrite: Value;
 
@@ -147,7 +147,7 @@ Begin
     then
       if n != rqst
       then
-        Send(RInvReq, n, HomeType, VC2, rqst,UNDEFINED, UNDEFINED);
+        Send(RInvReq, n, HomeType, VC2, rqst,HomeNode.val, UNDEFINED);
       endif;
       RemoveFromSharersList(n);
     endif;
@@ -188,6 +188,7 @@ Begin
     case WriteReq:
       HomeNode.state := HM;
       HomeNode.owner := msg.src;
+      HomeNode.val   := msg.val;
       Send(WriteAck, msg.src, HomeType, VC2, UNDEFINED,HomeNode.val,cnt); -- cnt is zero
 
     else
@@ -202,19 +203,22 @@ Begin
     switch msg.mtype
 
     case ReadReq:
-      HomeNode.state := TMS;     
+      HomeNode.state := TMS; 
+      AddToSharersList(msg.src);    
       HomeNode.pending_node := msg.src;
       Send(FwdReadReq, HomeNode.owner, HomeType, VC2, msg.src,UNDEFINED,UNDEFINED);
       
     case WriteReq:
       HomeNode.state := TMM;
       HomeNode.pending_node := msg.src;
+      HomeNode.val   := msg.val;
       Send(FwdWriteReq, HomeNode.owner, HomeType, VC2, msg.src,UNDEFINED,UNDEFINED);
       
     case WBReq:
-      RemoveFromSharersList(msg.src);
+      --RemoveFromSharersList(msg.src);
       HomeNode.state := HI;
       HomeNode.val   := msg.val;
+      HomeNode.owner := UNDEFINED;
       Send(WBAck, msg.src, HomeType, VC2, UNDEFINED,UNDEFINED,UNDEFINED);
 
     else
@@ -232,8 +236,10 @@ Begin
       Send(ReadAck, msg.src, HomeType, VC2, UNDEFINED,HomeNode.val,UNDEFINED);
 
     case WriteReq:
-      RemoveFromSharersList(msg.src);
+      --RemoveFromSharersList(msg.src);
       HomeNode.state := HM;
+      --HomeNode.owner := UNDEFINED;
+      HomeNode.val   := msg.val;
       Send(WriteAck, msg.src, HomeType, VC2, UNDEFINED,UNDEFINED,cnt-cnthack);        
       SendRInvReqToSharers(msg.src); -- removes sharers, too
       HomeNode.owner := msg.src;
@@ -249,6 +255,8 @@ Begin
     case FwdReadAck:
       HomeNode.state := HS;
       AddToSharersList(msg.src);
+      --AddToSharersList(msg.aux);
+      HomeNode.val := msg.val;
       undefine HomeNode.owner;
     
     case WBReq:
@@ -282,7 +290,7 @@ Begin
 	Send(WBStaleWriteAck, msg.src, HomeType, VC2, UNDEFINED,UNDEFINED,UNDEFINED);
 	HomeNode.state := HM;
 	HomeNode.owner := HomeNode.pending_node;
-	HomeNode.val   := msg.val;
+	--HomeNode.val   := msg.val;
 	undefine HomeNode.pending_node;
       elsif HomeNode.pending_node = msg.src
       then
@@ -341,6 +349,9 @@ Begin
     switch msg.mtype
     case RInvReq:
       Send(RIAck, msg.aux, p, VC2, UNDEFINED,UNDEFINED,UNDEFINED);
+      ps := PI;
+      pv := msg.val;
+    --  LastWrite := msg.val;
     else
       ErrorUnhandledMsg(msg, p);
     endswitch;
@@ -387,7 +398,7 @@ Begin
       if Procs[p].acount = Procs[p].icount
       then
 	      ps := PM;
-              pv := msg.val;
+             -- pv := msg.val;
               LastWrite := pv;
 	      undefine Procs[p].acount;
 	      undefine Procs[p].icount;
@@ -439,7 +450,7 @@ Begin
     case WBStaleWriteAck:
       ps := TWIS;
     case FwdWriteReq:
-      Send(WriteFwd, msg.aux, p, VC2, UNDEFINED,UNDEFINED,UNDEFINED);
+      Send(WriteFwd, msg.aux, p, VC2, UNDEFINED,pv,UNDEFINED);
       ps := TWIF;
     else
       ErrorUnhandledMsg(msg, p);
@@ -474,7 +485,7 @@ Begin
     switch msg.mtype
     case FwdWriteReq:
       ps := PI;
-      Send(WriteFwd, msg.aux, p, VC2, UNDEFINED, UNDEFINED,UNDEFINED);
+      Send(WriteFwd, msg.aux, p, VC2, UNDEFINED, pv,UNDEFINED);
     else
       ErrorUnhandledMsg(msg, p);
     endswitch;
@@ -519,7 +530,7 @@ ruleset n:Proc Do
   rule "write request PI"
     (p.state = PI)
   ==>
-    Send(WriteReq, HomeType, n, VC0, UNDEFINED,UNDEFINED, UNDEFINED);
+    Send(WriteReq, HomeType, n, VC0, UNDEFINED,v, UNDEFINED);
     p.state := IM;
     p.val   := v;
     clear p.acount;
@@ -536,7 +547,7 @@ ruleset n:Proc Do
   rule "upgrade request"
     (p.state = PS)
   ==>
-    Send(WriteReq, HomeType, n, VC0, UNDEFINED,UNDEFINED,UNDEFINED);
+    Send(WriteReq, HomeType, n, VC0, UNDEFINED,v,UNDEFINED);
     p.state := IM;  -- collapsing states from Nikos' diagrams
     p.val   := v;
     clear p.acount;
