@@ -680,3 +680,47 @@ invariant "values in shared state match memory"
     ->
       HomeNode.val=Procs[n].val
   end;
+
+invariant "modified implies empty sharers list"
+  HomeNode.state=HM
+  ->
+    MultiSetCount(i:HomeNode.sharers, true) =0;
+
+invariant "Invalid implies empty sharer list"
+  HomeNode.state = HI
+  -> 
+    MultiSetCount(i:HomeNode.sharers, true) =0;
+
+invariant "values in memory matches value of last write, when shared or invalid"
+  Forall n: Proc Do
+    HomeNode.state = HS | HomeNode.state = HI
+    -> 
+      HomeNode.val = LastWrite
+  end;
+
+invariant "value in shared state match memory"
+  Forall n : Proc Do
+    HomeNode.state=HS & Procs[n].state = PS
+    -> 
+      HomeNode.val = Procs[n].val
+  end;
+
+invariant "modified implies empty sharers list"
+  HomeNode.state = HI
+  -> 
+    MultiSetCount(i:HomeNode.sharers, true) =0;
+
+invariant "values in memory matches value of last write, when shared or invalid"
+  Forall n: Proc Do
+    HomeNode.state=HS |HomeNode.state = HI
+    ->
+      HomeNode.val=LastWrite
+  end;
+
+invariant "values in shared state match memory"
+  Forall n: Proc Do
+    HomeNode.state = HS &Procs[n].state= PS
+    ->
+      HomeNode.val=Procs[n].val
+  end;
+
