@@ -71,8 +71,9 @@ type
     Record
       state: enum { PM,PE,PS,PI,
                     TIS, TIL,TISS,     -- I to S and S to I
-		                IM, IIM, TRIS, TRIF, TMI,TEI,TMII, TWIS, TWIF    
+		               IEM,IM, IIM, TRIS, TRIF, TMI,TEI,TMII, TWIS, TWIF,    
                                        -- I to M and M to I
+                     ETMII,ETRIS,EIRIF,ETWIS,ETWIF
                   };
       val:Value;
       acount: 0..ProcCount;
@@ -217,7 +218,7 @@ Begin
       HomeNode.val   := msg.val;
       Send(FwdWriteReq, HomeNode.owner, HomeType, VC2, msg.src,UNDEFINED,UNDEFINED);
       
-    case WBReq,WBReqE:
+    case WBReq:
       --RemoveFromSharersList(msg.src);
       HomeNode.state := HI;
       HomeNode.val   := msg.val;
@@ -268,15 +269,20 @@ Begin
       undefine HomeNode.owner;    
      
     case WriteReq:
-      HomeNode.state := TMM;
-      HomeNode.val   := msg.val;
-      HomeNode.pending_node := msg.src;
-      Send(WriteAck, msg.src, HomeType, VC2, UNDEFINED,UNDEFINED,cnt-cnthack); 
-      Send(FwdWriteReq,HomeNode.owner,HomeType,VC2,msg.src,UNDEFINED,cnt);       
-      --ndRInvReqToSharers(msg.src); -- removes sharers, too
-      HomeNode.owner := msg.src;
+      if (HomeNode.owner = msg.src)
+	then 
+	HomeNode.val := msg.val;
+	HomeNode.state := HM;
+ 	Send(WriteAck,msg.src,HomeType, VC2,UNDEFINED,UNDEFINED,cnt-cnthack);
+      else 
+	HomeNode.state := TMM;
+      	HomeNode.pending_node := msg.src ;
+	Send(WriteAck, msg.src, HomeType, VC2, UNDEFINED,UNDEFINED,cnt-cnthack);  
+      	Send(RInvReq,HomeNode.owner,HomeType,VC2,msg.src,msg.val,UNDEFINED);       
+        HomeNode.owner := UNDEFINED;
+      endif;
       
-    case WBReq,WBReqE:
+    case WBReqE:
       --RemoveFromSharersList(msg.src);
       HomeNode.state := HI;
       HomeNode.val   := msg.val;
@@ -294,11 +300,20 @@ Begin
     switch msg.mtype
 
     case FwdReadAck:
+      if (IsUnDefined(msg.cnt)) 
+	then 
       HomeNode.state := HS;
       AddToSharersList(msg.src);
       --AddToSharersList(msg.aux);
       HomeNode.val := msg.val;
       undefine HomeNode.owner;
+      else
+      HomeNode.state := HS;
+      AddToSharersList(msg.src);
+      LastWrite := HomeNode.val;
+      undefine HomeNode.owner;
+      endif;
+
     
     case WBReq,WBReqE:
       Assert (!IsUnDefined(HomeNode.pending_node)) "pending_node undefined";
@@ -308,7 +323,10 @@ Begin
       Send(WBStaleReadAck, msg.src, HomeType, VC2, UNDEFINED,UNDEFINED,UNDEFINED);
       undefine HomeNode.owner;
       undefine HomeNode.pending_node;
-    
+--    case WBReqE:
+--      HomeNode.state := HS;
+--      Send(WBAck,msg.src,HomeType,VC2,UNDEFINED,UNDEFINED,UNDEFINED);
+
     else
       ErrorUnhandledMsg(msg, HomeType);
 
@@ -382,6 +400,8 @@ Begin
       Send(FwdReadAck, HomeType, p, VC2, UNDEFINED,pv, UNDEFINED);
       Send(ReadFwd, msg.aux, p, VC2, UNDEFINED,pv, UNDEFINED);
       ps := PS;
+    case RIAck:
+      ps := PM;
     else
       ErrorUnhandledMsg(msg, p);
     endswitch;
@@ -389,13 +409,14 @@ Begin
   case PE:
 
     switch msg.mtype
-    case FwdWriteReq:
-      Send(FwdWriteAck, HomeType, p, VC2, UNDEFINED,pv,UNDEFINED);
-      Send(WriteFwd, msg.aux, p, VC2, UNDEFINED,pv,UNDEFINED);
+    case RInvReq:
+     -- Send(RIAck, , p, VC2, UNDEFINED,pv,UNDEFINED);
+     -- Send(WriteFwd, msg.aux, p, VC2, UNDEFINED,pv,UNDEFINED);
       ps := PI;
+      pv := msg.val;
     case FwdReadReq:
       Send(FwdReadAck, HomeType, p, VC2, UNDEFINED,pv, UNDEFINED);
-      Send(ReadFwd, msg.aux, p, VC2, UNDEFINED,pv, UNDEFINED);
+     --Send(ReadFwd, msg.aux, p, VC2, UNDEFINED,pv, UNDEFINED);
       ps := PS;
     else
       ErrorUnhandledMsg(msg, p);
@@ -494,6 +515,38 @@ Begin
     else
       ErrorUnhandledMsg(msg, p);
     endswitch;
+ 
+ case IEM:
+    
+    switch msg.mtype
+    case WriteFwd:
+      pv := msg.val;
+      ps := PM;
+    case WriteAck:
+      Procs[p].icount := msg.cnt;
+      if Procs[p].acount = Procs[p].icount
+      then
+	      ps := PM;
+             -- pv := msg.val;
+              LastWrite := pv;
+	      undefine Procs[p].acount;
+	      undefine Procs[p].icount;
+      else
+        ps := IIM;
+      endif;
+    case RIAck:
+      Procs[p].acount := Procs[p].acount + 1;
+    case RInvReq:
+      Send(RIAck, msg.aux, p, VC2, UNDEFINED, UNDEFINED,UNDEFINED);
+    case FwdReadReq:
+      Send(FwdReadAck,HomeType,p,VC2,UNDEFINED,pv,0);
+    case FwdWriteReq:
+      msg_processed := false;
+      
+    else
+      ErrorUnhandledMsg(msg, p);
+    endswitch;
+
 
   case IIM:
 
@@ -532,10 +585,12 @@ Begin
     case FwdWriteReq:
       Send(WriteFwd, msg.aux, p, VC2, UNDEFINED,pv,UNDEFINED);
       ps := TWIF;
+    case RIAck:
+      ps := TMI;
     else
       ErrorUnhandledMsg(msg, p);
     endswitch;
-
+--------------------------------------------------------------------------
   case TEI:
 
     switch msg.mtype
@@ -543,20 +598,61 @@ Begin
       ps := PI;
     case RInvReq:
       Send(RIAck, msg.aux, p, VC2, UNDEFINED,UNDEFINED,UNDEFINED);
-      ps := TMII;
+      ps := ETMII;
     case WBStaleReadAck:
-      ps := TRIS;
+      ps := ETRIS;
     case FwdReadReq:
-      Send(ReadFwd, msg.aux, p, VC2, UNDEFINED,pv,UNDEFINED);
-      ps := TRIF;
+      --Send(ReadFwd, msg.aux, p, VC2, UNDEFINED,pv,UNDEFINED);
+      ps := TEI;
     case WBStaleWriteAck:
-      ps := TWIS;
+      ps := ETWIS;
     case FwdWriteReq:
       Send(WriteFwd, msg.aux, p, VC2, UNDEFINED,pv,UNDEFINED);
-      ps := TWIF;
+      ps := ETWIF;
     else
       ErrorUnhandledMsg(msg, p);
     endswitch;
+
+  case ETMII:
+    switch msg.mtype
+    case WBAck,WBStaleReadAck:
+      ps := PI;
+    case FwdReadReq:
+      --Send(WriteFwd, msg.aux, p, VC2, UNDEFINED,pv,UNDEFINED);
+      ps := TMII;
+    else
+      ErrorUnhandledMsg(msg, p);
+    endswitch;
+
+  case ETRIS:
+    switch msg.mtype
+    case FwdReadReq:
+      ps := PI;
+      Send(ReadFwd, msg.aux, p, VC2, UNDEFINED,pv,UNDEFINED);
+    case RInvReq:
+      ps := PS;
+      Send(RIAck,msg.aux,p,VC2,UNDEFINED,pv,UNDEFINED);
+    else
+      ErrorUnhandledMsg(msg, p);
+    endswitch;
+
+  case ETWIS:
+    switch msg.mtype
+    case FwdWriteReq:
+      ps := PI;
+      Send(WriteFwd, msg.aux, p, VC2, UNDEFINED, pv,UNDEFINED);
+    else
+      ErrorUnhandledMsg(msg, p);
+    endswitch;
+
+  case ETWIF:
+    switch msg.mtype
+    case WBStaleWriteAck:
+      ps := PI;
+    else
+      ErrorUnhandledMsg(msg, p);
+    endswitch;
+----------------------------------------------------------------------------------
 
 
   case TMII:
@@ -644,7 +740,7 @@ ruleset n:Proc Do
     (p.state = PE)
   ==>
     Send(WriteReq, HomeType, n, VC0, UNDEFINED,v, UNDEFINED);
-    p.state := IM;
+    p.state := IEM;
     p.val   := v;
     clear p.acount;
     clear p.icount;
