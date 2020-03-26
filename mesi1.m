@@ -76,7 +76,7 @@ type
     Record
       state: enum { PM, PS, PI, PE,
 			PEI,PEII,IEM,IEMI,
-                   TISS, TIS, TIL,          -- I to S and S to I
+                   TISS, TIS, TIL,TILW,TILS,          -- I to S and S to I
 		                IM, IIM, TRIS, TRIF, TMI, TMII, TWIS, TWIF    
                                        -- I to M and M to I
                   };
@@ -190,7 +190,7 @@ Begin
     case ReadReq:
       HomeNode.state := HE;
       HomeNode.owner := msg.src;
-      Send(ReadAck, msg.src, HomeType, VC2, UNDEFINED,HomeNode.val,cnt);
+      Send(ReadAck, msg.src, HomeType, VC2, msg.src,HomeNode.val,0);--cnt 0 TIS->PE
 
     case WriteReq:
 	if Isundefined(msg.cnt)
@@ -232,7 +232,7 @@ Begin
       HomeNode.val   := msg.val;
       HomeNode.owner := UNDEFINED;
       Send(WBAck, msg.src, HomeType, VC2, UNDEFINED,UNDEFINED,UNDEFINED);
-
+    case FwdWriteAck:
     case PutE:
 	Send(PutEAck, msg.src, HomeType, VC2, UNDEFINED,UNDEFINED,0);
 
@@ -248,7 +248,7 @@ Begin
 
     case ReadReq:
       AddToSharersList(msg.src);
-      Send(ReadAck, msg.src, HomeType, VC2, UNDEFINED,HomeNode.val,cnt);
+      Send(ReadAck, msg.src, HomeType, VC2, UNDEFINED,HomeNode.val,1);
 
     case WriteReq:
 	if Isundefined(msg.cnt) 
@@ -284,7 +284,7 @@ Begin
       then 
 	HomeNode.state := HM;
 	HomeNode.val   := msg.val;
-	Send(WriteAck,HomeNode.owner,HomeType,VC2,msg.src,UNDEFINED,UNDEFINED);
+	Send(WriteAck,HomeNode.owner,HomeType,VC2,msg.src,UNDEFINED,cnt);
       else
 	if(Isundefined(msg.cnt)) 
 	then 
@@ -325,7 +325,7 @@ Begin
 	elsif (msg.cnt = 2)
 	then 
 	HomeNode.state := HE;
-	Send(ReadAck,HomeNode.pending_node,HomeType,VC2,UNDEFINED,UNDEFINED,2); --inv TIS
+	Send(ReadAck,HomeNode.pending_node,HomeType,VC2,UNDEFINED,HomeNode.val,2); --inv TIS
 	RemoveFromSharersList(HomeNode.pending_node);
 	HomeNode.pending_node := UNDEFINED;    
 	endif;
@@ -558,11 +558,9 @@ Begin
       elsif msg.cnt=1
 	then
       ps := PS;
-	else 
-	ps := PS;
---	elsif msg.cnt=1
---	then
---	ps := PI;
+	elsif msg.cnt=2
+	then
+	ps := PI;
       endif;
     case FwdShareReq:
 	Send(FwdShareAck,msg.src,p,VC2,UNDEFINED,UNDEFINED,1); --cnt = 1 Form TIS
@@ -595,13 +593,44 @@ Begin
   case TIL:
    
     switch msg.mtype
-    case ReadAck, ReadFwd:
+    case ReadAck:
+--	if p=msg.aux & msg.cnt=0
+--	then 
+--	ps := PE;
+--	else 
+	ps := PI;
+--	endif;
+    case ReadFwd:
       ps := PI;
     case RInvReq:
       Send(RIAck, msg.aux, p, VC2, UNDEFINED,UNDEFINED,UNDEFINED);
+    case FwdWriteReq:
+      ps:=TILW;
+	Send(FwdWriteAck,msg.src,p,VC2,UNDEFINED,UNDEFINED,UNDEFINED);
+    case FwdShareReq:
+      ps:=TILS; 
+	Send(FwdShareAck,msg.src,p,VC2,UNDEFINED,UNDEFINED,1);
     else
       ErrorUnhandledMsg(msg, p);
     endswitch;
+
+	case TILW:
+	switch msg.mtype 
+	case ReadAck,ReadFwd:
+	ps:=PI;
+	else 
+	ErrorUnhandledMsg(msg,p);
+	endswitch;
+	
+	case TILS:
+	switch msg.mtype
+	case ReadAck:
+	ps:= PS;
+	pv:=msg.val;
+	else 
+	ErrorUnhandledMsg(msg,p);
+	endswitch;
+
 
   ----------------------------
   -- I/M interaction states
@@ -629,8 +658,13 @@ Begin
       Procs[p].acount := Procs[p].acount + 1;
     case RInvReq:
       Send(RIAck, msg.aux, p, VC2, UNDEFINED, UNDEFINED,UNDEFINED);
-    case FwdReadReq, FwdWriteReq:
-      msg_processed := false;
+    case FwdReadReq:
+	msg_processed:=false;
+    case FwdWriteReq:
+    msg_processed := false;
+    --  Send(FwdWriteAck,msg.src,p,VC2,UNDEFINED,UNDEFINED,1);
+    case FwdShareReq:
+	Send(FwdShareAck,msg.src,p,VC2,UNDEFINED,UNDEFINED,1);
     else
       ErrorUnhandledMsg(msg, p);
     endswitch;
@@ -871,12 +905,6 @@ ruleset n:Proc Do
   ==>
     Send(PutE,HomeType,n,VC2,UNDEFINED,p.val,UNDEFINED);
     p.state := PEI;
-  endrule;
- 
-  rule "evict PS"
-    (p.state = PS)
-  ==>
-    p.state := PI;
   endrule;
   
   endruleset;
